@@ -82,9 +82,11 @@ export function createInput(canvas) {
       if (down('up')) pitch -= 1;
       if (down('down')) pitch += 1;
       let roll = 0;
-      if (down('left')) roll -= 1;
-      if (down('right')) roll += 1;
-      if (mouseActive && Math.abs(mouseX) > 0.08) roll += Math.max(-1, Math.min(1, mouseX * 2));
+      // v2.2 fix: left input now gives positive roll so heading grows toward screen left, right input gives negative roll. Before this the two were swapped and the plane turned the wrong way.
+      if (down('left')) roll += 1;
+      if (down('right')) roll -= 1;
+      // v2.2 fix: mouse drag uses the same sign as the keys now. Dragging right gives negative roll so the plane turns right, dragging left gives positive roll so it turns left. Before this the drag steered the wrong way too.
+      if (mouseActive && Math.abs(mouseX) > 0.08) roll -= Math.max(-1, Math.min(1, mouseX * 2));
       return {
         pitch: Math.max(-1, Math.min(1, pitch)),
         roll: Math.max(-1, Math.min(1, roll)),

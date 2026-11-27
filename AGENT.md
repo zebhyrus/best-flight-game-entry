@@ -108,3 +108,13 @@ Literal main.ts with --no-experimental-strip-types: exit 1, ERR_UNKNOWN_FILE_EXT
 Proof with the same code as main.mjs, flag --no-experimental-strip-types: exit 0, dossier 655571 bytes, diff vs run A identical. So the code itself no longer needs type stripping at all. Only the filename extension needs it.
 
 Working tree: clean after commit, git status empty.
+
+## v2.2 note
+
+Change vs v2.1: game/src/input.js only. Left input now gives positive roll and right input gives negative roll, so the plane banks and turns toward the side pressed. Mouse drag got the same sign flip: dragging right now turns right and dragging left now turns left. No other game file changed. package.json version is now 2.2.0.
+
+Why: the player reported left and right were swapped in play. The old mapping sent left to roll -1, which drove heading down and steered the plane toward screen right. The autopilot in shots.js already proved positive roll steers toward positive x, which is screen left from the chase camera, so the input signs were the wrong way round and the fix flips them at the source.
+
+Test: headless Chrome for Testing drove the real shipped input.js and aircraft.js modules for 2 s of fixed steps per input. Left key, left touch button and left mouse drag all gave roll +1.10 or +0.88, heading +91 or +73 degrees and x +196 or +170. Right key, right touch button and right mouse drag all gave the exact mirror: roll -1.10 or -0.88, heading -91 or -73 degrees and x -196 or -170. Live game probes agreed: holding ArrowLeft moved the HUD heading from 0 to 12, holding ArrowRight moved it from 0 to 313, with the roll checklist marked done in both runs.
+
+Entry run, pinned node v22.23.4, fresh empty output dir: exit 0, dossier 655993 bytes, 4 screenshots.
