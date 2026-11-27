@@ -1,10 +1,27 @@
-// HUD for Skyhawk Valley 3D: altitude, speed, heading, fuel, hull,
+// HUD for Zephyr Valley 3D: altitude, speed, heading, fuel, hull,
 // mission banner and the artificial horizon. One file, one job:
 // every instrument the pilot reads, drawn lit on dark glass.
 // v2 adds altitude and speed tapes, a pitch ladder, a heading tape,
 // a chevron guide to the next ring and an onboarding checklist.
+// v2.3 adds a flashing low fuel warning, a landmark line naming
+// the gorge, the bridge and the village airstrip, a slalom clock,
+// and dark glass behind every line of text so it stays legible
+// over clear sky instead of washing out over white cloud.
 import { compassPoint, headingDegrees } from './aircraft.js';
 import { nextRing } from './missions.js';
+
+function landmarkLabel(plane) {
+  const z = plane.z;
+  const km = (target) => `${Math.max(0, (target - z) / 1000).toFixed(1)} KM`;
+  if (z > 7000) return 'MERIDIAN VILLAGE AND AIRSTRIP BELOW';
+  if (z > 6000) return `MERIDIAN VILLAGE ${km(7400)} AHEAD`;
+  if (z > 5200) return `PAST VOLCANO PEAK VILLAGE ${km(7400)} AHEAD`;
+  if (z > 3800) return 'VOLCANO PEAK ON THE RIGHT';
+  if (z > 3200) return `PAST GORGE BRIDGE VOLCANO ${km(4500)} AHEAD`;
+  if (z > 2100) return 'ZEPHYR GORGE AND GORGE BRIDGE BELOW';
+  if (z > 1200) return `ZEPHYR RIVER BELOW GORGE ${km(2600)} AHEAD`;
+  return `ZEPHYR VALLEY GORGE ${km(2600)} AHEAD`;
+}
 
 export function drawHud(ctx, w, h, plane, missions, best, screen, onboarding, view) {
   const pad = 16;
@@ -51,18 +68,28 @@ export function drawHud(ctx, w, h, plane, missions, best, screen, onboarding, vi
   ctx.fillStyle = '#ffe27a';
   ctx.font = '700 26px system-ui, sans-serif';
   ctx.fillText(String(missions.score), w - pad - 14, pad + 50);
+  ctx.fillStyle = 'rgba(6, 18, 34, 0.66)';
+  roundRect(ctx, pad, pad + 72, 460, 62, 10);
+  ctx.fill();
   ctx.fillStyle = '#9fe8ff';
   ctx.font = '700 11px system-ui, sans-serif';
   ctx.textAlign = 'left';
   ctx.fillText(`MISSION ${missions.level}  ${missions.name()}`, pad + 14, pad + 92);
   ctx.fillStyle = '#ffffff';
   ctx.font = '700 13px system-ui, sans-serif';
-  const progress = missions.type() === 1 ? (missions.done ? 'LAND THE PLANE' : 'FIND THE RUNWAY') : `RINGS ${missions.ringsPassed} OF ${missions.rings.length}`;
+  const progress = missions.type() === 1 ? (missions.done ? 'LAND THE PLANE' : 'FIND THE RUNWAY') : missions.type() === 3 ? `GATES ${missions.ringsPassed} OF ${missions.rings.length}  TIME ${Math.ceil(missions.timeLeft)}` : `RINGS ${missions.ringsPassed} OF ${missions.rings.length}`;
   ctx.fillText(progress, pad + 14, pad + 110);
+  ctx.fillStyle = '#9fe8ff';
+  ctx.font = '700 11px system-ui, sans-serif';
+  ctx.fillText(landmarkLabel(plane), pad + 14, pad + 128);
+  ctx.fillStyle = 'rgba(6, 18, 34, 0.66)';
+  roundRect(ctx, w - pad - 210, pad + 72, 210, 62, 10);
+  ctx.fill();
   ctx.fillStyle = '#9fe8ff';
   ctx.textAlign = 'right';
   ctx.fillText(`BEST ${best}`, w - pad - 14, pad + 92);
   ctx.fillText(view === 1 ? 'COCKPIT VIEW  C' : 'CHASE VIEW  C', w - pad - 14, pad + 110);
+  ctx.fillText(plane.boosting ? 'BOOST ON' : 'ZEPHYR', w - pad - 14, pad + 128);
   drawTape(ctx, pad + 14, 150, 54, 220, plane.alt, 100, 'FT');
   drawTape(ctx, w - pad - 68, 150, 54, 220, plane.speed, 20, 'KT');
   if (view === 1) drawCockpitFrame(ctx, w, h, plane);
@@ -78,7 +105,7 @@ export function drawHud(ctx, w, h, plane, missions, best, screen, onboarding, vi
     ctx.fillText('FLAPS DOWN  F', w - pad - 14, h - 108);
   }
   const ring = nextRing(missions);
-  if (ring && screen === 'play' && missions.type() !== 1) drawChevron(ctx, w, h, plane, ring);
+  if (ring && screen === 'play' && missions.type() !== 1) drawChevron(ctx, w, h, plane, ring, missions.type() === 3);
   if (missions.type() === 1 && screen === 'play') drawRunwayGuide(ctx, w, h, plane);
   if (missions.messageTime > 0 && missions.message) {
     ctx.font = '800 22px system-ui, sans-serif';
@@ -91,6 +118,20 @@ export function drawHud(ctx, w, h, plane, missions, best, screen, onboarding, vi
     ctx.fillStyle = '#ffe27a';
     ctx.textAlign = 'center';
     ctx.fillText(missions.message, cx, 175);
+  }
+  if (plane.lowFuel && screen === 'play') {
+    const blink = Math.floor(performance.now() / 400) % 2 === 0;
+    if (blink) {
+      ctx.font = '800 24px system-ui, sans-serif';
+      const warn = 'LOW FUEL HEAD FOR MERIDIAN AIRSTRIP';
+      const tw = ctx.measureText(warn).width;
+      ctx.fillStyle = 'rgba(120, 10, 10, 0.85)';
+      roundRect(ctx, cx - tw / 2 - 18, 196, tw + 36, 40, 10);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.fillText(warn, cx, 223);
+    }
   }
   if (onboarding && screen === 'play') drawOnboarding(ctx, w, h, onboarding);
   if (plane.speed < 58 && screen === 'play') {
@@ -179,6 +220,7 @@ function drawTape(ctx, x, y, w, h, value, step, unit) {
   ctx.lineTo(x + w, centre + 7);
   ctx.closePath();
   ctx.fill();
+  void unit;
 }
 
 function drawCockpitFrame(ctx, w, h, plane) {
@@ -238,7 +280,7 @@ function drawHeadingTape(ctx, cx, y, w, plane) {
   ctx.fill();
 }
 
-function drawChevron(ctx, w, h, plane, ring) {
+function drawChevron(ctx, w, h, plane, ring, isGate) {
   const dx = ring.x - plane.x;
   const dz = ring.z - plane.z;
   const dy = ring.y - plane.alt;
@@ -266,10 +308,13 @@ function drawChevron(ctx, w, h, plane, ring) {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+  ctx.fillStyle = 'rgba(6, 18, 34, 0.72)';
+  roundRect(ctx, cx - 130, cy + 38, 260, 52, 10);
+  ctx.fill();
   ctx.fillStyle = '#ffffff';
   ctx.font = '800 18px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(`NEXT RING ${dist} FT`, cx, cy + 62);
+  ctx.fillText(isGate ? `NEXT GATE ${dist} FT` : `NEXT RING ${dist} FT`, cx, cy + 62);
   ctx.fillStyle = '#9fe8ff';
   ctx.font = '700 12px system-ui, sans-serif';
   ctx.fillText(diff > 0.2 ? 'TURN RIGHT' : diff < -0.2 ? 'TURN LEFT' : 'STRAIGHT AHEAD', cx, cy + 82);
@@ -280,6 +325,9 @@ function drawRunwayGuide(ctx, w, h, plane) {
   const dz = 7800 - plane.z;
   const dist = Math.round(Math.sqrt(dx * dx + dz * dz));
   const cx = w / 2;
+  ctx.fillStyle = 'rgba(6, 18, 34, 0.72)';
+  roundRect(ctx, cx - 170, h * 0.32 - 28, 340, 56, 10);
+  ctx.fill();
   ctx.fillStyle = '#ffffff';
   ctx.font = '800 18px system-ui, sans-serif';
   ctx.textAlign = 'center';
@@ -370,13 +418,13 @@ export function drawScreen(ctx, w, h, screen, state, best) {
     ctx.fillRect(0, 0, w, h);
     ctx.fillStyle = '#ffe27a';
     ctx.font = '800 64px system-ui, sans-serif';
-    ctx.fillText('SKYHAWK VALLEY', cx, h * 0.32);
+    ctx.fillText('ZEPHYR VALLEY', cx, h * 0.32);
     ctx.fillStyle = '#ffffff';
     ctx.font = '700 24px system-ui, sans-serif';
-    ctx.fillText('REAL 3D FLIGHT OVER A GREEN VALLEY', cx, h * 0.32 + 44);
+    ctx.fillText('REAL 3D FLIGHT OVER A RIVER GORGE', cx, h * 0.32 + 44);
     ctx.fillStyle = '#cfeeff';
     ctx.font = '400 17px system-ui, sans-serif';
-    ctx.fillText('Fly the gold rings. Land on the lit runway. Dodge the storms.', cx, h * 0.32 + 78);
+    ctx.fillText('Fly the gold rings. Cross Gorge Bridge. Land at Meridian Airstrip.', cx, h * 0.32 + 78);
     ctx.fillText('Arrows steer. W and S throttle. Shift boosts. F flaps. C changes view.', cx, h * 0.32 + 106);
     ctx.fillStyle = '#ffe27a';
     ctx.font = '800 22px system-ui, sans-serif';

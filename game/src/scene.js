@@ -1,18 +1,29 @@
-// Real 3D world for Skyhawk Valley, built on vendored three.js.
+// Real 3D world for Zephyr Valley, built on vendored three.js.
 // One file, one job: build the scene once from the seeded terrain
 // and move the camera, the aircraft, the rings and the storms each
 // frame. No network request, every mesh is built from primitives.
+// v2.3 adds the gorge bridge and the village houses, a light beam
+// and a stronger pulse on the target ring, a wider view and speed
+// streaks on boost, and tan dust that bursts on touchdown.
 import * as THREE from 'three';
+import { CAMERA, RING } from './config.js';
 
 export const VIEW_CHASE = 0;
 export const VIEW_COCKPIT = 1;
 
 function groundColor(terrain, x, z) {
   const ground = terrain.groundHeight(x, z);
-  if (Math.abs(x - terrain.riverX(z)) < 26) return [0.16, 0.42, 0.62];
-  if (Math.abs(x - terrain.roadX(z)) < 9) return [0.42, 0.38, 0.34];
-  if (ground > 300) return [0.92, 0.93, 0.96];
-  if (ground > 220) return [0.55, 0.52, 0.45];
+  if (Math.abs(x - terrain.riverX(z)) < 34) return [0.14, 0.48, 0.72];
+  if (Math.abs(x - terrain.roadX(z)) < 9) return [0.45, 0.4, 0.34];
+  if (z > 2100 && z < 3200 && Math.abs(x - terrain.riverX(z)) < 320) return [0.55, 0.46, 0.34];
+  if (terrain.volcano) {
+    const vdx = (x - terrain.volcano.x) / terrain.volcano.width;
+    const vdz = (z - terrain.volcano.z) / (terrain.volcano.width * 1.4);
+    if (vdx * vdx + vdz * vdz < 0.5 && ground > 200) return [0.3, 0.26, 0.26];
+    if (vdx * vdx + vdz * vdz < 0.12) return [0.85, 0.32, 0.12];
+  }
+  if (ground > 300) return [0.96, 0.97, 1.0];
+  if (ground > 220) return [0.58, 0.54, 0.46];
   for (const field of terrain.fields) {
     if (Math.abs(x - field.x) < field.w / 2 && Math.abs(z - field.z) < field.d / 2) {
       return [((field.color >> 16) & 255) / 255, ((field.color >> 8) & 255) / 255, (field.color & 255) / 255];
@@ -20,8 +31,8 @@ function groundColor(terrain, x, z) {
   }
   const edge = Math.min(1, Math.max(0, (Math.abs(x) - 900) / 900));
   const vary = 0.5 + 0.5 * Math.sin(x * 0.013 + z * 0.007);
-  const g = 0.42 + vary * 0.12 - edge * 0.08;
-  return [0.22 + vary * 0.06, g, 0.2 + vary * 0.05];
+  const g = 0.48 + vary * 0.13 - edge * 0.08;
+  return [0.24 + vary * 0.06, g, 0.22 + vary * 0.05];
 }
 
 function buildTerrainMesh(terrain) {
@@ -47,13 +58,17 @@ function buildTerrainMesh(terrain) {
 
 function buildAircraft() {
   const group = new THREE.Group();
-  const cream = new THREE.MeshStandardMaterial({ color: 0xf2e8d5, roughness: 0.5, metalness: 0.15 });
-  const red = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.5, metalness: 0.2 });
+  const cream = new THREE.MeshStandardMaterial({ color: 0xfff6e0, roughness: 0.45, metalness: 0.15 });
+  const yellow = new THREE.MeshStandardMaterial({ color: 0xffd21a, roughness: 0.45, metalness: 0.2 });
+  const red = new THREE.MeshStandardMaterial({ color: 0xd42a1e, roughness: 0.5, metalness: 0.2 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x223344, roughness: 0.3, metalness: 0.4 });
-  const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.1, 13, 12), cream);
+  const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.1, 13, 12), cream);
   fuselage.rotation.x = Math.PI / 2;
   group.add(fuselage);
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(1.5, 3.2, 12), red);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.3, 0.5, 12.6), red);
+  stripe.position.set(0, -0.1, 0.2);
+  group.add(stripe);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(1.6, 3.2, 12), red);
   nose.rotation.x = Math.PI / 2;
   nose.position.z = 8;
   group.add(nose);
@@ -61,21 +76,36 @@ function buildAircraft() {
   canopy.scale.set(1, 0.75, 1.9);
   canopy.position.set(0, 1.15, 2.2);
   group.add(canopy);
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(26, 0.45, 4.2), red);
-  wing.position.set(0, -0.2, 1.2);
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(27, 0.5, 4.4), yellow);
+  wing.position.set(0, 1.7, 1.2);
   group.add(wing);
-  const wingTipL = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.5, 4.2), cream);
-  wingTipL.position.set(-13.4, -0.2, 1.2);
+  const wingTipL = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.55, 4.4), red);
+  wingTipL.position.set(-13.9, 1.7, 1.2);
   group.add(wingTipL);
   const wingTipR = wingTipL.clone();
-  wingTipR.position.x = 13.4;
+  wingTipR.position.x = 13.9;
   group.add(wingTipR);
-  const tailWing = new THREE.Mesh(new THREE.BoxGeometry(9, 0.4, 2.6), red);
+  for (const side of [-1, 1]) {
+    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.4, 0.5), dark);
+    strut.position.set(side * 3.4, 0.7, 1.6);
+    strut.rotation.z = side * 0.5;
+    group.add(strut);
+  }
+  const tailWing = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.45, 2.8), yellow);
   tailWing.position.set(0, 0.4, -6);
   group.add(tailWing);
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.4, 4.4, 3), red);
-  fin.position.set(0, 2, -6);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.45, 4.8, 3.2), red);
+  fin.position.set(0, 2.2, -6);
   group.add(fin);
+  const exhaustMat = new THREE.MeshBasicMaterial({ color: 0xff7a1a });
+  for (const side of [-1, 1]) {
+    const exhaust = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6), exhaustMat);
+    exhaust.position.set(side * 1.2, 0.4, 7.2);
+    group.add(exhaust);
+  }
+  const landingLight = new THREE.Mesh(new THREE.SphereGeometry(0.45, 8, 6), new THREE.MeshBasicMaterial({ color: 0xfffbe0 }));
+  landingLight.position.set(0, -1.2, 7.6);
+  group.add(landingLight);
   const prop = new THREE.Group();
   prop.position.z = 9.8;
   const bladeA = new THREE.Mesh(new THREE.BoxGeometry(0.5, 7.5, 0.25), dark);
@@ -86,7 +116,7 @@ function buildAircraft() {
   const hub = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), dark);
   prop.add(hub);
   group.add(prop);
-  const disc = new THREE.Mesh(new THREE.CircleGeometry(3.9, 24), new THREE.MeshBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.12, side: THREE.DoubleSide }));
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(4.1, 24), new THREE.MeshBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.2, side: THREE.DoubleSide }));
   disc.position.z = 9.7;
   group.add(disc);
   const gearMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.7 });
@@ -98,12 +128,13 @@ function buildAircraft() {
     wheel.position.set(gx, -3.4, 1.5);
     group.add(wheel);
   }
-  const navL = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff2222 }));
-  navL.position.set(-13.6, 0, 1.2);
+  const navL = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff2222 }));
+  navL.position.set(-14.2, 1.7, 1.2);
   group.add(navL);
-  const navR = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 6), new THREE.MeshBasicMaterial({ color: 0x22ff66 }));
-  navR.position.set(13.6, 0, 1.2);
+  const navR = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), new THREE.MeshBasicMaterial({ color: 0x22ff66 }));
+  navR.position.set(14.2, 1.7, 1.2);
   group.add(navR);
+  group.scale.setScalar(1.12);
   group.userData.prop = prop;
   group.userData.navL = navL;
   group.userData.navR = navR;
@@ -115,22 +146,32 @@ export function createScene(canvas, terrain) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0xbfd9ee, 900, 5200);
-  const camera = new THREE.PerspectiveCamera(62, 1, 1, 12000);
+  scene.fog = new THREE.Fog(0xd8e8f2, 900, 5200);
+  const camera = new THREE.PerspectiveCamera(CAMERA.baseFov, 1, 1, 12000);
   const skyGeo = new THREE.SphereGeometry(9000, 24, 12);
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
-    uniforms: { top: { value: new THREE.Color(0x2f6fb8) }, mid: { value: new THREE.Color(0x9cc8e8) }, low: { value: new THREE.Color(0xe8f2f8) } },
+    uniforms: { top: { value: new THREE.Color(0x2a68b4) }, mid: { value: new THREE.Color(0x8ec4e8) }, low: { value: new THREE.Color(0xffeecf) } },
     vertexShader: 'varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: 'varying vec3 vPos; uniform vec3 top; uniform vec3 mid; uniform vec3 low; void main(){ float h = normalize(vPos).y; vec3 c = h > 0.12 ? mix(mid, top, smoothstep(0.12, 0.7, h)) : mix(low, mid, smoothstep(-0.1, 0.12, h)); gl_FragColor = vec4(c, 1.0); }',
   });
   const sky = new THREE.Mesh(skyGeo, skyMat);
   scene.add(sky);
-  const sun = new THREE.DirectionalLight(0xfff2cc, 1.6);
+  const sun = new THREE.DirectionalLight(0xffe6a0, 1.9);
   sun.position.set(-1800, 2600, 1200);
   scene.add(sun);
-  scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x5a7a4a, 0.9));
+  scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x6a8a4a, 1.0));
+  if (terrain.volcano) {
+    const crater = new THREE.Mesh(new THREE.CircleGeometry(52, 24), new THREE.MeshBasicMaterial({ color: 0xff5a1a, fog: false }));
+    crater.rotation.x = -Math.PI / 2;
+    crater.position.set(terrain.volcano.x, terrain.groundHeight(terrain.volcano.x, terrain.volcano.z) + 4, terrain.volcano.z);
+    scene.add(crater);
+    const glowDisc = new THREE.Mesh(new THREE.CircleGeometry(90, 24), new THREE.MeshBasicMaterial({ color: 0xff8a3a, transparent: true, opacity: 0.3, fog: false }));
+    glowDisc.rotation.x = -Math.PI / 2;
+    glowDisc.position.set(terrain.volcano.x, terrain.groundHeight(terrain.volcano.x, terrain.volcano.z) + 2, terrain.volcano.z);
+    scene.add(glowDisc);
+  }
   const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(180, 24), new THREE.MeshBasicMaterial({ color: 0xfff6c8, fog: false }));
   sunDisc.position.set(-2600, 1900, 2600);
   sunDisc.lookAt(0, 0, 4500);
@@ -164,6 +205,30 @@ export function createScene(canvas, terrain) {
     b.add(roof);
     b.position.set(barn.x, gy, barn.z);
     scene.add(b);
+  }
+  for (const house of terrain.houses || []) {
+    const gy = terrain.groundHeight(house.x, house.z);
+    const hgroup = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(house.w, house.h, house.d), new THREE.MeshLambertMaterial({ color: house.color }));
+    body.position.y = house.h / 2;
+    hgroup.add(body);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(house.w, house.d) * 0.75, 7, 4), new THREE.MeshLambertMaterial({ color: 0x8a3a28 }));
+    roof.rotation.y = Math.PI / 4;
+    roof.position.y = house.h + 3;
+    hgroup.add(roof);
+    hgroup.position.set(house.x, gy, house.z);
+    scene.add(hgroup);
+  }
+  const bridge = terrain.bridge;
+  if (bridge) {
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(360, 4, 18), new THREE.MeshLambertMaterial({ color: 0x8a6a4a }));
+    deck.position.set(bridge.x, 58, bridge.z);
+    scene.add(deck);
+    for (const side of [-1, 1]) {
+      const tower = new THREE.Mesh(new THREE.BoxGeometry(8, 46, 8), new THREE.MeshLambertMaterial({ color: 0x6a4a3a }));
+      tower.position.set(bridge.x + side * 90, 78, bridge.z);
+      scene.add(tower);
+    }
   }
   const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92 });
   const clouds = [];
@@ -199,15 +264,24 @@ export function createScene(canvas, terrain) {
       scene.add(lamp);
     }
   }
-  const ringMat = new THREE.MeshStandardMaterial({ color: 0xffb020, emissive: 0xaa6600, emissiveIntensity: 0.7, roughness: 0.35, metalness: 0.6 });
-  const ringGeo = new THREE.TorusGeometry(34, 2.6, 12, 40);
+  const ringMat = new THREE.MeshStandardMaterial({ color: 0xffb020, emissive: 0xcc7700, emissiveIntensity: 1.1, roughness: 0.35, metalness: 0.6 });
+  const ringGeo = new THREE.TorusGeometry(RING.radius, 3.6, 12, 48);
   const ringMeshes = [];
-  for (let i = 0; i < 8; i += 1) {
+  for (let i = 0; i < 10; i += 1) {
     const ring = new THREE.Mesh(ringGeo, ringMat);
     ring.visible = false;
     scene.add(ring);
     ringMeshes.push(ring);
   }
+  const beamMat = new THREE.MeshBasicMaterial({ color: 0xffd34d, transparent: true, opacity: 0.38, side: THREE.DoubleSide, depthWrite: false });
+  const beamGeo = new THREE.CylinderGeometry(12, 12, 460, 12, 1, true);
+  const beam = new THREE.Mesh(beamGeo, beamMat);
+  beam.visible = false;
+  scene.add(beam);
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0xffc820, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false });
+  const glow = new THREE.Mesh(new THREE.CircleGeometry(RING.radius + 16, 32), glowMat);
+  glow.visible = false;
+  scene.add(glow);
   const stormMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, roughness: 1, transparent: true, opacity: 0.92, emissive: 0x222233, emissiveIntensity: 0.4 });
   const stormMeshes = [];
   for (let i = 0; i < 8; i += 1) {
@@ -231,16 +305,36 @@ export function createScene(canvas, terrain) {
     scene.add(p);
     particles.push({ mesh: p, life: 0 });
   }
+  const dustMat = new THREE.MeshBasicMaterial({ color: 0xcbb28a, transparent: true, opacity: 0.75 });
+  const dustPool = [];
+  for (let i = 0; i < 20; i += 1) {
+    const p = new THREE.Mesh(new THREE.SphereGeometry(2.6, 8, 6), dustMat.clone());
+    p.visible = false;
+    scene.add(p);
+    dustPool.push({ mesh: p, life: 0 });
+  }
+  const streakMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
+  const streaks = [];
+  for (let i = 0; i < 12; i += 1) {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 34), streakMat.clone());
+    s.visible = false;
+    scene.add(s);
+    streaks.push(s);
+  }
   const aircraft = buildAircraft();
   scene.add(aircraft);
   const camPos = new THREE.Vector3(0, 440, -40);
   const camTarget = new THREE.Vector3(0, 420, 100);
   let view = VIEW_CHASE;
   let smokeTimer = 0;
+  let dustCount = 0;
   return {
     view() { return view; },
     toggleView() { view = view === VIEW_CHASE ? VIEW_COCKPIT : VIEW_CHASE; return view; },
     setView(v) { view = v; },
+    fov() { return camera.fov; },
+    dustVisible() { return dustPool.some((p) => p.life > 0); },
+    dustTotal() { return dustCount; },
     snap(state) {
       const plane = state.plane;
       const forward = new THREE.Vector3(Math.sin(plane.heading), 0, Math.cos(plane.heading));
@@ -271,6 +365,20 @@ export function createScene(canvas, terrain) {
         if (made >= 10) break;
       }
     },
+    dust(x, y, z) {
+      let made = 0;
+      for (const p of dustPool) {
+        if (p.life > 0) continue;
+        p.mesh.visible = true;
+        p.mesh.position.set(x + (Math.random() - 0.5) * 26, y + Math.random() * 4, z + (Math.random() - 0.5) * 26);
+        p.mesh.material.opacity = 0.8;
+        p.mesh.scale.setScalar(1);
+        p.life = 1;
+        made += 1;
+        dustCount += 1;
+        if (made >= 12) break;
+      }
+    },
     draw(state, dt, time) {
       const plane = state.plane;
       const shake = plane.buffet * 0.7;
@@ -289,16 +397,31 @@ export function createScene(canvas, terrain) {
         cloud.position.x += cloud.userData.drift * dt;
         if (cloud.position.x > 2400) cloud.position.x = -2400;
       }
+      const targetRing = state.missions.rings.find((ring) => !ring.passed) || null;
       state.missions.rings.forEach((ring, i) => {
         const mesh = ringMeshes[i];
         if (!mesh) return;
         mesh.visible = !ring.passed;
         mesh.position.set(ring.x, ring.y, ring.z);
         mesh.rotation.y = time * 0.4;
-        const pulse = 1 + Math.sin(time * 3 + i) * 0.04;
+        const isTarget = targetRing === ring;
+        const pulse = isTarget ? 1 + Math.sin(time * 5) * 0.1 : 1 + Math.sin(time * 3 + i) * 0.04;
         mesh.scale.set(pulse, pulse, pulse);
       });
       for (let i = ringMeshes.length - 1; i >= state.missions.rings.length; i -= 1) ringMeshes[i].visible = false;
+      if (targetRing) {
+        beam.visible = true;
+        beam.position.set(targetRing.x, targetRing.y, targetRing.z);
+        beamMat.opacity = 0.3 + 0.14 * Math.sin(time * 5);
+        glow.visible = true;
+        glow.position.set(targetRing.x, targetRing.y, targetRing.z);
+        glow.lookAt(camera.position);
+        const gs = 1 + Math.sin(time * 5) * 0.12;
+        glow.scale.set(gs, gs, gs);
+      } else {
+        beam.visible = false;
+        glow.visible = false;
+      }
       state.missions.storms.forEach((storm, i) => {
         const mesh = stormMeshes[i];
         if (!mesh) return;
@@ -322,8 +445,31 @@ export function createScene(canvas, terrain) {
         p.mesh.material.opacity = Math.max(0, p.life * 0.8);
         if (p.life <= 0) p.mesh.visible = false;
       }
+      for (const p of dustPool) {
+        if (p.life <= 0) continue;
+        p.life -= dt * 0.55;
+        p.mesh.position.y += dt * 5;
+        p.mesh.position.x += dt * 6;
+        p.mesh.scale.setScalar(1 + (1 - p.life) * 2.4);
+        p.mesh.material.opacity = Math.max(0, p.life * 0.8);
+        if (p.life <= 0) p.mesh.visible = false;
+      }
+      const wantFov = plane.boosting ? CAMERA.boostFov : CAMERA.baseFov;
+      if (Math.abs(camera.fov - wantFov) > 0.05) {
+        camera.fov += (wantFov - camera.fov) * Math.min(1, dt * 6);
+        camera.updateProjectionMatrix();
+      }
       const forward = new THREE.Vector3(Math.sin(plane.heading), 0, Math.cos(plane.heading));
       const up = new THREE.Vector3(0, 1, 0);
+      streaks.forEach((s, i) => {
+        if (!plane.boosting) { s.visible = false; return; }
+        s.visible = true;
+        const side = (i % 2 === 0 ? -1 : 1) * (18 + (i % 5) * 9);
+        const ahead = 30 + ((i * 37 + time * 420) % 220);
+        s.position.set(plane.x + side * Math.cos(plane.heading), plane.alt + ((i % 4) - 1.5) * 8, plane.z + ahead * Math.cos(plane.heading) - side * Math.sin(plane.heading) * 0.4);
+        s.rotation.y = plane.heading;
+        s.material.opacity = 0.35;
+      });
       if (view === VIEW_COCKPIT) {
         const eye = new THREE.Vector3(plane.x, plane.alt + 1.6, plane.z).addScaledVector(forward, 3);
         camPos.lerp(eye, 0.6);
@@ -345,6 +491,7 @@ export function createScene(canvas, terrain) {
         camera.lookAt(camTarget);
         aircraft.visible = true;
       }
+      void up;
       renderer.render(scene, camera);
     },
   };

@@ -1,8 +1,10 @@
-// Skyhawk Valley 3D: shared tuning constants for the flight game.
+// Zephyr Valley 3D: shared tuning constants for the flight game.
 // One file, one job: every number the physics, the world and the
 // renderer agree on lives here so a tweak lands everywhere at once.
+// v2.3: fuel now binds, sorties run longer, a fourth mission joins,
+// boost gets a wider view, and the valley gets named landmarks.
 export const STEP = 1 / 60;
-export const BEST_KEY = 'skyhawk-valley-best';
+export const BEST_KEY = 'zephyr-valley-best';
 export const WORLD = {
   width: 2600,
   length: 9000,
@@ -23,13 +25,20 @@ export const PLANE = {
   stallSpeed: 58,
   flapStallSpeed: 48,
   fuelMax: 100,
-  fuelDrain: 0.55,
+  fuelDrain: 1.35,
+  fuelLow: 25,
   hullMax: 100,
 };
 export const RING = {
-  radius: 34,
+  radius: 46,
   count: 8,
-  spacing: 520,
+  spacing: 720,
+};
+export const SLALOM = {
+  gates: 10,
+  spacing: 430,
+  timeLimit: 95,
+  weave: 200,
 };
 export const RUNWAY = {
   x: 0,
@@ -44,8 +53,23 @@ export const SCORE = {
   softLanding: 250,
   centrelineBonus: 150,
   stormDodge: 150,
+  slalomGate: 100,
+  slalomBonus: 300,
   timeBonus: 2,
 };
-export const MISSION_NAMES = ['RING RUN', 'VALLEY LANDING', 'STORM DODGE'];
-export const PLANE_NAME = 'SKYHAWK';
-export const VALLEY_NAME = 'SKYHAWK VALLEY';
+export const MISSION_NAMES = ['RING RUN', 'VALLEY LANDING', 'STORM DODGE', 'GORGE SLALOM'];
+export const PLANE_NAME = 'ZEPHYR';
+export const VALLEY_NAME = 'ZEPHYR VALLEY';
+export const LANDMARKS = {
+  gorge: { name: 'ZEPHYR GORGE', z: 2600 },
+  bridge: { name: 'GORGE BRIDGE', z: 2600 },
+  village: { name: 'MERIDIAN VILLAGE', z: 7400 },
+  airstrip: { name: 'MERIDIAN AIRSTRIP', z: 7800 },
+  river: { name: 'ZEPHYR RIVER', z: 1300 },
+};
+export const CAMERA = {
+  baseFov: 62,
+  boostFov: 78,
+  chaseHeight: 11,
+  chaseBack: 42,
+};

@@ -1,7 +1,9 @@
-// Synthesised sound for Skyhawk Valley: engine hum, ring chime,
+// Synthesised sound for Zephyr Valley: engine hum, ring chime,
 // landing thud, storm buzz and crash, all from WebAudio oscillators
 // and noise. One file, one job: no audio files, nothing to download.
 // v2 adds wind rush that grows with speed and a stall rattle.
+// v2.3 adds a low fuel warning beep and a wind swell on boost, so
+// boost is heard as well as seen through the wider camera view.
 export function createAudio() {
   let context = null;
   let engineOsc = null;
@@ -46,20 +48,21 @@ export function createAudio() {
     }
     return context;
   }
-  function tone(freq, dur, type, vol, slideTo) {
+  function tone(freq, dur, type, vol, slideTo, delay) {
     if (!enabled || !ensure()) return;
     try {
+      const start = context.currentTime + (delay || 0);
       const osc = context.createOscillator();
       osc.type = type || 'sine';
-      osc.frequency.setValueAtTime(freq, context.currentTime);
-      if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, context.currentTime + dur);
+      osc.frequency.setValueAtTime(freq, start);
+      if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, start + dur);
       const gain = context.createGain();
-      gain.gain.setValueAtTime(vol || 0.12, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + dur);
+      gain.gain.setValueAtTime(vol || 0.12, start);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
       osc.connect(gain);
       gain.connect(context.destination);
-      osc.start();
-      osc.stop(context.currentTime + dur + 0.05);
+      osc.start(start);
+      osc.stop(start + dur + 0.05);
     } catch { /* sound is polish, never a crash */ }
   }
   function noise(dur, vol, low) {
@@ -84,13 +87,14 @@ export function createAudio() {
   }
   return {
     unlock() { ensure(); if (context && context.state === 'suspended') context.resume(); },
-    setEngine(throttle, speed, flying) {
+    setEngine(throttle, speed, flying, boost) {
       if (!ensure() || !engineGain) return;
       try {
         const target = flying ? 0.02 + throttle * 0.05 + speed / 9000 : 0;
         engineGain.gain.setTargetAtTime(enabled ? target : 0, context.currentTime, 0.15);
-        engineOsc.frequency.setTargetAtTime(46 + throttle * 55 + speed * 0.12, context.currentTime, 0.2);
-        if (windGain) windGain.gain.setTargetAtTime(enabled && flying ? Math.max(0, speed - 60) / 4000 : 0, context.currentTime, 0.2);
+        engineOsc.frequency.setTargetAtTime(46 + throttle * 55 + speed * 0.12 + (boost ? 14 : 0), context.currentTime, 0.2);
+        const windTarget = enabled && flying ? Math.max(0, speed - 60) / 4000 + (boost ? 0.045 : 0) : 0;
+        if (windGain) windGain.gain.setTargetAtTime(windTarget, context.currentTime, 0.15);
       } catch { /* ignore */ }
     },
     ring() { tone(880, 0.18, 'sine', 0.16); tone(1318, 0.3, 'sine', 0.12); },
@@ -98,6 +102,8 @@ export function createAudio() {
     land() { noise(0.35, 0.3, 300); tone(120, 0.3, 'sine', 0.16, 60); },
     crash() { noise(0.9, 0.4, 420); tone(90, 0.8, 'sawtooth', 0.16, 32); },
     click() { tone(660, 0.07, 'sine', 0.1); },
+    lowFuel() { tone(980, 0.14, 'square', 0.1); tone(740, 0.18, 'square', 0.1, 0, 0.22); },
+    gate() { tone(990, 0.14, 'sine', 0.14); tone(1480, 0.22, 'sine', 0.1); },
     toggle() { enabled = !enabled; return enabled; },
     isEnabled() { return enabled; },
   };

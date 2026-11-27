@@ -1,13 +1,28 @@
-// Missions for Skyhawk Valley: three sortie types, ring placement,
+// Missions for Zephyr Valley: four sortie types, ring placement,
 // storm clouds, scoring and level flow. One file, one job: what the
 // pilot has to do, and whether it counts as done.
 // v2 deepens each one: storm cells push the plane, landings are
 // judged on flare, sink rate and centreline, and streaks pay more.
-import { MISSION_NAMES, RING, RUNWAY, SCORE, WORLD } from './config.js';
+// v2.3 adds GORGE SLALOM, a timed run through ten gates along the
+// gorge, and shuffles the mission order so the four types come in
+// a fresh order each cycle instead of a fixed rotation.
+import { MISSION_NAMES, RING, RUNWAY, SCORE, SLALOM, WORLD } from './config.js';
 
 export const MISSION_RING = 0;
 export const MISSION_LAND = 1;
 export const MISSION_STORM = 2;
+export const MISSION_SLALOM = 3;
+
+function shuffledOrder(random) {
+  const order = [MISSION_RING, MISSION_LAND, MISSION_STORM, MISSION_SLALOM];
+  for (let i = order.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random.next() * (i + 1));
+    const tmp = order[i];
+    order[i] = order[j];
+    order[j] = tmp;
+  }
+  return order;
+}
 
 export function createMissions(random) {
   return {
@@ -26,9 +41,18 @@ export function createMissions(random) {
     bestStreak: 0,
     landings: 0,
     landingGrade: '',
-    type() { return this.index % 3; },
+    order: shuffledOrder(random),
+    orderPos: 0,
+    timeLimit: 0,
+    timeLeft: 0,
+    type() { return this.order[this.orderPos % this.order.length]; },
     name() { return MISSION_NAMES[this.type()]; },
   };
+}
+
+export function setMissionType(missions, type) {
+  missions.order = [type, MISSION_RING, MISSION_LAND, MISSION_STORM, MISSION_SLALOM].filter((v, i, a) => a.indexOf(v) === i);
+  missions.orderPos = 0;
 }
 
 function placeRings(missions, random, startZ, stormy) {
@@ -55,6 +79,21 @@ function placeRings(missions, random, startZ, stormy) {
   }
 }
 
+function placeSlalom(missions, random, startZ) {
+  missions.rings = [];
+  missions.storms = [];
+  let z = startZ + 420;
+  for (let i = 0; i < SLALOM.gates; i += 1) {
+    const weave = Math.sin(i * 0.9) * SLALOM.weave;
+    const x = Math.max(-900, Math.min(900, weave + random.range(-50, 50)));
+    const y = random.range(260, 420);
+    missions.rings.push({ x, y, z, passed: false, index: i });
+    z += SLALOM.spacing + random.range(-40, 60);
+  }
+  missions.timeLimit = SLALOM.timeLimit;
+  missions.timeLeft = SLALOM.timeLimit;
+}
+
 export function startMission(missions, random, planeZ) {
   missions.ringsPassed = 0;
   missions.streak = 0;
@@ -62,17 +101,22 @@ export function startMission(missions, random, planeZ) {
   missions.failed = false;
   missions.elapsed = 0;
   missions.landingGrade = '';
+  missions.timeLimit = 0;
+  missions.timeLeft = 0;
   const type = missions.type();
   if (type === MISSION_LAND) {
     missions.rings = [];
     missions.storms = [];
-    missions.message = 'LAND ON THE RUNWAY AHEAD';
+    missions.message = 'LAND ON THE RUNWAY AT MERIDIAN AIRSTRIP';
   } else if (type === MISSION_STORM) {
     placeRings(missions, random, planeZ, true);
     missions.message = 'FLY THE RINGS AND DODGE THE STORMS';
+  } else if (type === MISSION_SLALOM) {
+    placeSlalom(missions, random, planeZ);
+    missions.message = 'SLALOM THE GORGE GATES BEAT THE CLOCK';
   } else {
     placeRings(missions, random, planeZ, false);
-    missions.message = 'FLY THROUGH EVERY RING';
+    missions.message = 'FLY THROUGH EVERY RING OVER ZEPHYR GORGE';
   }
   missions.messageTime = 4;
 }
@@ -101,41 +145,57 @@ export function stormPush(missions, plane, dt) {
 // Advance one step. Returns event flags the loop turns into sound,
 // score popups and screen changes.
 export function updateMissions(missions, plane, dt, terrain) {
-  const events = { ring: false, storm: false, landed: false, complete: false };
+  const events = { ring: false, storm: false, landed: false, complete: false, gate: false };
   missions.elapsed += dt;
   if (missions.messageTime > 0) missions.messageTime -= dt;
   const type = missions.type();
+  if (type === MISSION_SLALOM) {
+    missions.timeLeft = Math.max(0, missions.timeLimit - missions.elapsed);
+  }
   if (type !== MISSION_LAND) {
     const ring = nextRing(missions);
+    const total = type === MISSION_SLALOM ? SLALOM.gates : RING.count;
+    const passDist = type === MISSION_SLALOM ? RING.radius + 44 : RING.radius + 26;
     if (ring) {
       const dz = ring.z - plane.z;
       const dx = ring.x - plane.x;
       const dy = ring.y - plane.alt;
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (dist < RING.radius + 26) {
+      if (dist < passDist) {
         ring.passed = true;
         missions.ringsPassed += 1;
         missions.streak += 1;
         missions.bestStreak = Math.max(missions.bestStreak, missions.streak);
-        missions.score += SCORE.ring + (missions.streak - 1) * SCORE.ringStreak;
+        const perGate = type === MISSION_SLALOM ? SCORE.slalomGate : SCORE.ring;
+        missions.score += perGate + (missions.streak - 1) * SCORE.ringStreak;
         events.ring = true;
-        missions.message = missions.streak > 1 ? `RING ${missions.ringsPassed} OF ${RING.count} STREAK ${missions.streak}` : `RING ${missions.ringsPassed} OF ${RING.count}`;
+        if (type === MISSION_SLALOM) events.gate = true;
+        const label = type === MISSION_SLALOM ? 'GATE' : 'RING';
+        missions.message = missions.streak > 1 ? `${label} ${missions.ringsPassed} OF ${total} STREAK ${missions.streak}` : `${label} ${missions.ringsPassed} OF ${total}`;
         missions.messageTime = 2.2;
-        if (missions.ringsPassed >= RING.count) {
+        if (missions.ringsPassed >= total) {
           missions.done = true;
-          missions.score += Math.max(0, Math.round(600 - missions.elapsed) * SCORE.timeBonus);
+          const bonus = type === MISSION_SLALOM ? SCORE.slalomBonus + Math.max(0, Math.round(missions.timeLeft) * SCORE.timeBonus) : Math.max(0, Math.round(600 - missions.elapsed) * SCORE.timeBonus);
+          missions.score += bonus;
           events.complete = true;
         }
-      } else if (dz < -RING.radius - 60) {
+      } else if (dz < -passDist - 60) {
         ring.passed = true;
         missions.streak = 0;
-        missions.message = 'RING MISSED KEEP FLYING';
+        const label = type === MISSION_SLALOM ? 'GATE MISSED KEEP FLYING' : 'RING MISSED KEEP FLYING';
+        missions.message = label;
         missions.messageTime = 2;
         if (missions.rings.every((r) => r.passed)) {
           missions.done = true;
           events.complete = true;
         }
       }
+    }
+    if (type === MISSION_SLALOM && missions.timeLeft <= 0 && !missions.done) {
+      missions.done = true;
+      missions.message = missions.ringsPassed > 0 ? 'TIME UP GATES SCORED' : 'TIME UP FLY FASTER NEXT RUN';
+      missions.messageTime = 3;
+      events.complete = true;
     }
     for (const storm of missions.storms) {
       if (storm.hit) continue;
@@ -187,6 +247,11 @@ export function updateMissions(missions, plane, dt, terrain) {
 export function advanceLevel(missions, random, planeZ) {
   missions.level += 1;
   missions.index += 1;
+  missions.orderPos += 1;
+  if (missions.orderPos >= missions.order.length) {
+    missions.order = shuffledOrder(random);
+    missions.orderPos = 0;
+  }
   startMission(missions, random, planeZ);
 }
 

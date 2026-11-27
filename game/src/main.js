@@ -1,4 +1,4 @@
-// Boot and the one loop for Skyhawk Valley 3D: input is read every
+// Boot and the one loop for Zephyr Valley 3D: input is read every
 // frame, the world advances in fixed 1/60 s steps, three.js paints
 // the world and the HUD canvas paints the instruments on top.
 // Screens: title, play, paused, over, complete.
@@ -6,6 +6,9 @@
 // ?seed=N fixes the valley. ?shot=start|play|mission|storm|cockpit
 // stages that scene instead of running the loop, paints it twice
 // and sets window.__shotReady for a screenshot.
+// v2.3 wires low fuel audio, touchdown dust and boost audio into
+// the step, and exposes window.__game so headless checks can read
+// the live state, the scene and the audio without guessing.
 import { BEST_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createTerrain, hitsMountain } from './terrain.js';
@@ -27,6 +30,7 @@ const canvas = document.getElementById('game');
 const hudCanvas = document.getElementById('hud');
 const status = document.getElementById('status');
 const audio = createAudio();
+let scene = null;
 
 function createGameState() {
   const random = createRandom(seed);
@@ -37,6 +41,8 @@ function createGameState() {
     plane, terrain, missions, random,
     time: 0,
     screen: 'title',
+    lowFuelBeepAt: -10,
+    lowFuelWarned: false,
     onboarding: { throttle: false, pitch: false, roll: false, ring: false },
     startMission() { startMission(state.missions, state.random, plane.z); },
     reset(nextSeed) {
@@ -46,6 +52,8 @@ function createGameState() {
       state.missions = createMissions(freshRandom);
       state.time = 0;
       state.screen = 'title';
+      state.lowFuelBeepAt = -10;
+      state.lowFuelWarned = false;
       state.onboarding = { throttle: false, pitch: false, roll: false, ring: false };
       resetAircraft(plane, 0);
       state.startMission();
@@ -62,6 +70,17 @@ function createGameState() {
       const events = updateAircraft(plane, input, dt, state.terrain);
       const missionEvents = updateMissions(state.missions, plane, dt, state.terrain);
       if (missionEvents.ring) state.onboarding.ring = true;
+      if (events.touched && scene) scene.dust(plane.x, plane.alt, plane.z);
+      if (plane.lowFuel && state.time - state.lowFuelBeepAt > 2) {
+        state.lowFuelBeepAt = state.time;
+        audio.lowFuel();
+      }
+      if (plane.lowFuel && !state.lowFuelWarned) {
+        state.lowFuelWarned = true;
+        state.missions.message = 'LOW FUEL HEAD FOR MERIDIAN AIRSTRIP';
+        state.missions.messageTime = 3;
+      }
+      if (plane.fuel > 30) state.lowFuelWarned = false;
       const peak = hitsMountain(state.terrain, plane.x, plane.alt, plane.z);
       if (peak && !plane.onGround) {
         const destroyed = damageAircraft(plane, 25 * dt);
@@ -72,6 +91,7 @@ function createGameState() {
         }
       }
       if (missionEvents.ring) audio.ring();
+      if (missionEvents.gate) audio.gate();
       if (missionEvents.storm) { damageAircraft(plane, 18); audio.storm(); }
       if (missionEvents.landed) audio.land();
       if (events.crashed) {
@@ -92,7 +112,7 @@ function createGameState() {
         resetAircraft(plane, 0);
         plane.alt = 420;
       }
-      audio.setEngine(plane.throttle, plane.speed, state.screen === 'play');
+      audio.setEngine(plane.throttle, plane.speed, state.screen === 'play', plane.boosting);
     },
   };
   state.startMission();
@@ -100,7 +120,7 @@ function createGameState() {
 }
 
 const state = createGameState();
-let scene = null;
+window.__game = { state, audio, get scene() { return scene; } };
 
 function readBest() {
   try { return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0; }
@@ -143,6 +163,7 @@ function runShot(name) {
 function runGame() {
   const input = createInput(canvas);
   scene = createScene(canvas, state.terrain);
+  window.__input = input;
   let best = readBest();
   let accumulator = 0;
   let last = performance.now();
@@ -208,7 +229,7 @@ function runGame() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && state.screen === 'play') state.screen = 'paused';
   });
-  announce('Skyhawk Valley. Press Space or tap to fly.');
+  announce('Zephyr Valley. Press Space or tap to fly.');
   requestAnimationFrame(frame);
 }
 
