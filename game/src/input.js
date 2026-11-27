@@ -1,10 +1,13 @@
 // Input for Skyhawk Valley: keyboard, mouse and on screen touch
 // buttons. One file, one job: turn every device into one small
 // control object the physics reads each frame.
+// v2 adds F for flaps and C to switch chase and cockpit view.
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_MUTE = 4;
 export const ACTION_NEXT = 8;
+export const ACTION_FLAPS = 16;
+export const ACTION_VIEW = 32;
 
 const KEYMAP = {
   ArrowUp: 'up', ArrowDown: 'down',
@@ -29,6 +32,8 @@ export function createInput(canvas) {
     if (event.code === 'KeyP' || event.code === 'Escape') actions |= ACTION_PAUSE;
     if (event.code === 'KeyM') actions |= ACTION_MUTE;
     if (event.code === 'KeyN') actions |= ACTION_NEXT;
+    if (event.code === 'KeyF') actions |= ACTION_FLAPS;
+    if (event.code === 'KeyC') actions |= ACTION_VIEW;
     if (KEYMAP[event.code]) {
       keys.add(KEYMAP[event.code]);
       if (event.code.startsWith('Arrow')) event.preventDefault();
@@ -85,11 +90,10 @@ export function createInput(canvas) {
         roll: Math.max(-1, Math.min(1, roll)),
         boost: down('boost'),
         brake: down('brake'),
-        throttleUp: keys.has('up') || touch.up,
-        throttleDown: false,
+        throttleUp: keys.has('throttleUp'),
+        throttleDown: keys.has('throttleDown'),
       };
     },
-    // Throttle is held separately: W raises it, S lowers it.
     throttleKeys() {
       return { up: keys.has('throttleUp'), down: keys.has('throttleDown') };
     },

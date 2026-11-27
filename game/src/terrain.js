@@ -2,6 +2,8 @@
 // clouds and the runway, all placed from one seed so the valley is
 // the same every time a seed is used. World axes: x is lateral,
 // z is forward along the valley, y is height above the ground.
+// The 3D scene reads the same groundHeight the physics uses, so the
+// mesh the pilot sees is the ground the pilot can hit.
 import { RUNWAY, WORLD } from './config.js';
 
 function smoothNoise(random, points) {
@@ -38,7 +40,7 @@ export function createTerrain(seedRandom) {
       x: seedRandom.range(-WORLD.width, WORLD.width),
       z: seedRandom.range(100, WORLD.length),
       size: seedRandom.range(6, 16),
-      shade: seedRandom.pick(['#1d6b2e', '#2a7d33', '#17603a', '#3a8a2f']),
+      shade: seedRandom.pick([0x1d6b2e, 0x2a7d33, 0x17603a, 0x3a8a2f]),
     });
   }
   const fields = [];
@@ -48,7 +50,7 @@ export function createTerrain(seedRandom) {
       z: seedRandom.range(100, WORLD.length),
       w: seedRandom.range(120, 320),
       d: seedRandom.range(120, 300),
-      color: seedRandom.pick(['#7fb069', '#a3c14a', '#e9c46a', '#8ac926', '#6a994e']),
+      color: seedRandom.pick([0x7fb069, 0xa3c14a, 0xe9c46a, 0x8ac926, 0x6a994e]),
     });
   }
   const clouds = [];
@@ -75,6 +77,7 @@ export function createTerrain(seedRandom) {
     roadX(z) { return (roadCurve(z / WORLD.length) - 0.5) * 1500 + 500; },
     ridgeHeight(x) { return 90 + ridgeCurve((x + WORLD.width) / (WORLD.width * 2)) * 260; },
     groundHeight(x, z) {
+      if (Math.abs(x - RUNWAY.x) < RUNWAY.width + 30 && z > RUNWAY.z - RUNWAY.length - 60 && z < RUNWAY.z + 140) return 20;
       const edge = Math.min(1, Math.max(0, (Math.abs(x) - 900) / 900));
       let height = 18 + edge * edge * 320;
       for (const peak of peaks) {

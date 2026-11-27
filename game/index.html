@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Skyhawk Valley</title>
+<title>Skyhawk Valley 3D</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0a2036; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #hud { position: fixed; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; touch-action: none; }
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   #touchbar { display: none; position: fixed; left: 0; right: 0; bottom: 10px; justify-content: space-between; padding: 0 12px; pointer-events: none; z-index: 5; }
   #touchbar.show { display: flex; }
@@ -14,9 +15,13 @@
   .tbtn { width: 58px; height: 58px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.7); background: rgba(6,18,34,0.55); color: #fff; font: 700 20px system-ui, sans-serif; touch-action: none; }
   .tbtn:active { background: rgba(255,210,60,0.7); }
 </style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
 </head>
 <body>
-<canvas id="game" aria-label="Skyhawk Valley: fly the rings, land on the runway, dodge the storms"></canvas>
+<canvas id="game" aria-label="Skyhawk Valley 3D: fly the rings, land on the runway, dodge the storms"></canvas>
+<canvas id="hud" aria-hidden="true"></canvas>
 <p id="status" role="status" aria-live="polite"></p>
 <div id="touchbar">
   <div class="tgroup">

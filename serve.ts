@@ -1,5 +1,5 @@
 // A tiny static server for game/ (Node 22, standard library only),
-// so Skyhawk Valley can be played locally without a build step:
+// so Skyhawk Valley 3D can be played locally without a build step:
 // `node serve.ts` serves game/ on http://localhost:8080. It sends
 // the MIME types a browser game needs, refuses any path outside
 // game/, and otherwise does nothing clever: a development

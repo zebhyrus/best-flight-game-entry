@@ -1,10 +1,12 @@
 // Synthesised sound for Skyhawk Valley: engine hum, ring chime,
 // landing thud, storm buzz and crash, all from WebAudio oscillators
 // and noise. One file, one job: no audio files, nothing to download.
+// v2 adds wind rush that grows with speed and a stall rattle.
 export function createAudio() {
   let context = null;
   let engineOsc = null;
   let engineGain = null;
+  let windGain = null;
   let enabled = true;
   function ensure() {
     if (context) return context;
@@ -23,6 +25,22 @@ export function createAudio() {
       filter.connect(engineGain);
       engineGain.connect(context.destination);
       engineOsc.start();
+      const windLen = context.sampleRate;
+      const windBuffer = context.createBuffer(1, windLen, context.sampleRate);
+      const windData = windBuffer.getChannelData(0);
+      for (let i = 0; i < windLen; i += 1) windData[i] = Math.random() * 2 - 1;
+      const wind = context.createBufferSource();
+      wind.buffer = windBuffer;
+      wind.loop = true;
+      const windFilter = context.createBiquadFilter();
+      windFilter.type = 'bandpass';
+      windFilter.frequency.value = 700;
+      windGain = context.createGain();
+      windGain.gain.value = 0;
+      wind.connect(windFilter);
+      windFilter.connect(windGain);
+      windGain.connect(context.destination);
+      wind.start();
     } catch {
       context = null;
     }
@@ -72,6 +90,7 @@ export function createAudio() {
         const target = flying ? 0.02 + throttle * 0.05 + speed / 9000 : 0;
         engineGain.gain.setTargetAtTime(enabled ? target : 0, context.currentTime, 0.15);
         engineOsc.frequency.setTargetAtTime(46 + throttle * 55 + speed * 0.12, context.currentTime, 0.2);
+        if (windGain) windGain.gain.setTargetAtTime(enabled && flying ? Math.max(0, speed - 60) / 4000 : 0, context.currentTime, 0.2);
       } catch { /* ignore */ }
     },
     ring() { tone(880, 0.18, 'sine', 0.16); tone(1318, 0.3, 'sine', 0.12); },

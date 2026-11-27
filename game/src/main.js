@@ -1,18 +1,20 @@
-// Boot and the one loop for Skyhawk Valley: input is read every
-// frame, the world advances in fixed 1/60 s steps, and the renderer
-// paints what is there. Screens: title, play, paused, over, complete.
+// Boot and the one loop for Skyhawk Valley 3D: input is read every
+// frame, the world advances in fixed 1/60 s steps, three.js paints
+// the world and the HUD canvas paints the instruments on top.
+// Screens: title, play, paused, over, complete.
 //
-// ?seed=N fixes the valley. ?shot=start|play|mission|end (with
-// &seed=N) stages that scene instead of running the loop, paints it
-// twice and sets window.__shotReady for a screenshot.
+// ?seed=N fixes the valley. ?shot=start|play|mission|storm|cockpit
+// stages that scene instead of running the loop, paints it twice
+// and sets window.__shotReady for a screenshot.
 import { BEST_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createTerrain, hitsMountain } from './terrain.js';
 import { createAircraft, damageAircraft, resetAircraft, updateAircraft } from './aircraft.js';
-import { advanceLevel, createMissions, startMission, updateMissions } from './missions.js';
+import { advanceLevel, createMissions, startMission, stormPush, updateMissions } from './missions.js';
 import { createAudio } from './audio.js';
-import { ACTION_CONFIRM, ACTION_MUTE, ACTION_NEXT, ACTION_PAUSE, createInput } from './input.js';
-import { createRenderer, SCREEN_COMPLETE, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { ACTION_CONFIRM, ACTION_FLAPS, ACTION_MUTE, ACTION_NEXT, ACTION_PAUSE, ACTION_VIEW, createInput } from './input.js';
+import { createScene } from './scene.js';
+import { drawHud, drawScreen } from './hud.js';
 import { stageShot } from './shots.js';
 
 const MAX_FRAME = 0.25;
@@ -22,6 +24,7 @@ const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
 const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
 
 const canvas = document.getElementById('game');
+const hudCanvas = document.getElementById('hud');
 const status = document.getElementById('status');
 const audio = createAudio();
 
@@ -33,7 +36,8 @@ function createGameState() {
   const state = {
     plane, terrain, missions, random,
     time: 0,
-    screen: SCREEN_TITLE,
+    screen: 'title',
+    onboarding: { throttle: false, pitch: false, roll: false, ring: false },
     startMission() { startMission(state.missions, state.random, plane.z); },
     reset(nextSeed) {
       const freshRandom = createRandom(nextSeed || seed);
@@ -41,24 +45,28 @@ function createGameState() {
       state.terrain = createTerrain(freshRandom);
       state.missions = createMissions(freshRandom);
       state.time = 0;
-      state.screen = SCREEN_TITLE;
+      state.screen = 'title';
+      state.onboarding = { throttle: false, pitch: false, roll: false, ring: false };
       resetAircraft(plane, 0);
       state.startMission();
     },
     step(dt, input, demo) {
       state.time += dt;
-      if (state.screen !== SCREEN_PLAY && !demo) return;
-      const keys = input.throttleUp !== undefined ? input : { throttleUp: false, throttleDown: false };
-      if (keys.throttleUp) plane.throttle = Math.min(1, plane.throttle + 0.55 * dt);
-      if (keys.throttleDown) plane.throttle = Math.max(0, plane.throttle - 0.55 * dt);
+      if (state.screen !== 'play' && !demo) return;
+      if (input.throttleUp) { plane.throttle = Math.min(1, plane.throttle + 0.55 * dt); state.onboarding.throttle = true; }
+      if (input.throttleDown) plane.throttle = Math.max(0, plane.throttle - 0.55 * dt);
       if (input.brake) plane.throttle = Math.max(0.08, plane.throttle - 0.8 * dt);
+      if (input.pitch !== 0) state.onboarding.pitch = true;
+      if (input.roll !== 0) state.onboarding.roll = true;
+      stormPush(state.missions, plane, dt);
       const events = updateAircraft(plane, input, dt, state.terrain);
       const missionEvents = updateMissions(state.missions, plane, dt, state.terrain);
+      if (missionEvents.ring) state.onboarding.ring = true;
       const peak = hitsMountain(state.terrain, plane.x, plane.alt, plane.z);
       if (peak && !plane.onGround) {
         const destroyed = damageAircraft(plane, 25 * dt);
         if (destroyed || plane.hull <= 0) {
-          state.screen = SCREEN_OVER;
+          state.screen = 'over';
           audio.crash();
           return;
         }
@@ -68,15 +76,15 @@ function createGameState() {
       if (missionEvents.landed) audio.land();
       if (events.crashed) {
         audio.crash();
-        state.screen = SCREEN_OVER;
+        state.screen = 'over';
         return;
       }
       if (missionEvents.complete) {
-        state.screen = SCREEN_COMPLETE;
+        state.screen = 'complete';
         return;
       }
       if (plane.hull <= 0 || (events.outOfFuel && plane.alt <= state.terrain.groundHeight(plane.x, plane.z) + 4)) {
-        state.screen = SCREEN_OVER;
+        state.screen = 'over';
         return;
       }
       if (plane.z > state.terrain.runway.z + 900 && state.missions.type() === 1 && !state.missions.done) {
@@ -84,7 +92,7 @@ function createGameState() {
         resetAircraft(plane, 0);
         plane.alt = 420;
       }
-      audio.setEngine(plane.throttle, plane.speed, state.screen === SCREEN_PLAY);
+      audio.setEngine(plane.throttle, plane.speed, state.screen === 'play');
     },
   };
   state.startMission();
@@ -92,6 +100,7 @@ function createGameState() {
 }
 
 const state = createGameState();
+let scene = null;
 
 function readBest() {
   try { return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0; }
@@ -102,14 +111,30 @@ function saveBest(value) {
   catch { /* storage can be off; best lasts this visit only */ }
 }
 
+function paintFrame(best, screenOverride) {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (canvas.width !== w || canvas.height !== h) scene.resize(w, h);
+  if (hudCanvas.width !== w || hudCanvas.height !== h) { hudCanvas.width = w; hudCanvas.height = h; }
+  const screen = screenOverride || state.screen;
+  const showOnboarding = state.missions.level === 1 && state.missions.index === 0 && !(state.onboarding.throttle && state.onboarding.pitch && state.onboarding.roll && state.onboarding.ring);
+  scene.draw(state, STEP, state.time);
+  const ctx = hudCanvas.getContext('2d');
+  drawHud(ctx, w, h, state.plane, state.missions, best, screen, showOnboarding ? state.onboarding : null, scene.view());
+  if (screen !== 'play') drawScreen(ctx, w, h, screen, state, best);
+}
+
 function runShot(name) {
-  const scene = stageShot(name, state);
+  scene = createScene(canvas, state.terrain);
+  const staged = stageShot(name, state);
+  state.screen = staged.screen;
+  scene.setView(staged.view);
+  scene.snap(state);
   let painted = 0;
   function paint() {
-    const renderer = createRenderer(canvas);
-    renderer.draw(state, scene.screen, scene.best);
+    paintFrame(staged.best, staged.screen);
     painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
+    if (painted < 3) requestAnimationFrame(paint);
     else window.__shotReady = true;
   }
   requestAnimationFrame(paint);
@@ -117,7 +142,7 @@ function runShot(name) {
 
 function runGame() {
   const input = createInput(canvas);
-  const renderer = createRenderer(canvas);
+  scene = createScene(canvas, state.terrain);
   let best = readBest();
   let accumulator = 0;
   let last = performance.now();
@@ -127,7 +152,9 @@ function runGame() {
   function announce(message) { status.textContent = message; }
   function startGame() {
     state.reset(seed);
-    state.screen = SCREEN_PLAY;
+    state.screen = 'play';
+    scene.setView(0);
+    scene.snap(state);
     audio.unlock();
     audio.click();
     announce('Playing. Fly the rings.');
@@ -139,18 +166,20 @@ function runGame() {
   function handleActions() {
     const actions = input.takeActions();
     if (actions & ACTION_MUTE) { const on = audio.toggle(); announce(on ? 'Sound on.' : 'Sound off.'); }
-    if (actions & ACTION_CONFIRM && (state.screen === SCREEN_TITLE || state.screen === SCREEN_OVER)) startGame();
-    else if (actions & ACTION_NEXT && state.screen === SCREEN_COMPLETE) {
+    if (actions & ACTION_FLAPS && state.screen === 'play') { state.plane.flaps = !state.plane.flaps; announce(state.plane.flaps ? 'Flaps down.' : 'Flaps up.'); }
+    if (actions & ACTION_VIEW && state.screen === 'play') { scene.toggleView(); }
+    if (actions & ACTION_CONFIRM && (state.screen === 'title' || state.screen === 'over')) startGame();
+    else if (actions & ACTION_NEXT && state.screen === 'complete') {
       advanceLevel(state.missions, state.random, state.plane.z);
       resetAircraft(state.plane, 0);
       state.plane.alt = 420;
-      state.screen = SCREEN_PLAY;
+      state.screen = 'play';
       announce(`Mission ${state.missions.level}. ${state.missions.name()}.`);
-    } else if (actions & ACTION_PAUSE && state.screen === SCREEN_PLAY) {
-      state.screen = SCREEN_PAUSED;
+    } else if (actions & ACTION_PAUSE && state.screen === 'play') {
+      state.screen = 'paused';
       announce('Paused.');
-    } else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && state.screen === SCREEN_PAUSED) {
-      state.screen = SCREEN_PLAY;
+    } else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && state.screen === 'paused') {
+      state.screen = 'play';
       announce('Playing.');
     }
   }
@@ -159,25 +188,25 @@ function runGame() {
     accumulator += Math.min((now - last) / 1000, MAX_FRAME);
     last = now;
     handleActions();
-    if (state.screen === SCREEN_TITLE) {
+    if (state.screen === 'title') {
       state.time += 1 / 60;
       state.plane.z += 2;
-    } else if (state.screen === SCREEN_PLAY) {
+    } else if (state.screen === 'play') {
       while (accumulator >= STEP) {
         const controls = input.controls();
         const keys = input.throttleKeys();
-        state.step(STEP, { ...controls, throttleUp: keys.up, throttleDown: keys.down }, false);
+        state.step(STEP, { ...controls, throttleUp: keys.up, throttleDown: keys.down, flaps: false }, false);
         accumulator -= STEP;
-        if (state.screen !== SCREEN_PLAY) break;
+        if (state.screen !== 'play') break;
       }
-      if (state.screen === SCREEN_OVER) endGame();
+      if (state.screen === 'over') endGame();
     } else {
       accumulator = 0;
     }
-    renderer.draw(state, state.screen, best);
+    paintFrame(best);
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && state.screen === SCREEN_PLAY) state.screen = SCREEN_PAUSED;
+    if (document.hidden && state.screen === 'play') state.screen = 'paused';
   });
   announce('Skyhawk Valley. Press Space or tap to fly.');
   requestAnimationFrame(frame);

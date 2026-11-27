@@ -1,6 +1,8 @@
 // The Skyhawk aircraft: position, speed, pitch, roll, heading, fuel
 // and hull. One file, one job: pure flight physics with no drawing,
 // so the loop, the missions and the screenshots all share one truth.
+// v2 adds flaps, a flare aware touchdown, stall buffet and a
+// speed based control authority so slow flight feels heavy.
 import { PLANE, WORLD } from './config.js';
 
 export function createAircraft() {
@@ -19,6 +21,11 @@ export function createAircraft() {
     landed: false,
     verticalSpeed: 0,
     bank: 0,
+    flaps: false,
+    flared: false,
+    touchdownSink: 0,
+    touchdownOffset: 0,
+    buffet: 0,
   };
 }
 
@@ -28,10 +35,15 @@ export function resetAircraft(plane, startZ) {
   Object.assign(plane, fresh);
 }
 
-// input: { pitch: -1..1, roll: -1..1, throttleDelta, boost }
+export function stallSpeed(plane) {
+  return plane.flaps ? PLANE.flapStallSpeed : PLANE.stallSpeed;
+}
+
+// input: { pitch, roll, throttleDelta, boost, brake, flaps }
 // Returns event flags for the caller to score and sound.
 export function updateAircraft(plane, input, dt, terrain) {
-  const events = { stalled: false, scraped: false, crashed: false, outOfFuel: false };
+  const events = { stalled: false, scraped: false, crashed: false, outOfFuel: false, touched: false };
+  if (input.flaps) plane.flaps = !plane.flaps;
   if (plane.onGround) {
     plane.speed = Math.max(0, plane.speed + (plane.throttle - 0.12) * 90 * dt);
     plane.z += plane.speed * dt * 0.9;
@@ -41,27 +53,31 @@ export function updateAircraft(plane, input, dt, terrain) {
     }
     return events;
   }
+  const authority = 0.45 + Math.min(1, plane.speed / 200) * 0.55;
   const targetSpeed = PLANE.minSpeed + plane.throttle * (PLANE.maxSpeed - PLANE.minSpeed);
   const boost = input.boost ? 26 : 0;
-  plane.speed += ((targetSpeed + boost - plane.speed) * 0.55 + (input.pitch < 0 ? 6 : 0)) * dt;
+  const flapDrag = plane.flaps ? 9 : 0;
+  plane.speed += ((targetSpeed + boost - flapDrag - plane.speed) * 0.55 + (input.pitch < 0 ? 6 : 0)) * dt;
   plane.speed = Math.max(28, Math.min(PLANE.maxSpeed + 30, plane.speed));
   const rollTarget = input.roll * PLANE.maxRoll;
-  plane.roll += (rollTarget - plane.roll) * Math.min(1, PLANE.rollRate * dt * 2.2);
+  plane.roll += (rollTarget - plane.roll) * Math.min(1, PLANE.rollRate * dt * 2.2 * authority);
   plane.bank = plane.roll;
   plane.heading += plane.roll * PLANE.turnRate * (0.45 + plane.speed / 320) * dt;
   plane.heading = ((plane.heading + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
   const pitchTarget = input.pitch * 0.55;
-  plane.pitch += (pitchTarget - plane.pitch) * Math.min(1, 3 * dt);
-  const stalled = plane.speed < 58;
+  plane.pitch += (pitchTarget - plane.pitch) * Math.min(1, 3 * dt * authority);
+  const stalled = plane.speed < stallSpeed(plane);
+  plane.buffet = stalled ? Math.min(1, plane.buffet + dt * 3) : Math.max(0, plane.buffet - dt * 3);
   if (stalled) events.stalled = true;
   const climb = -plane.pitch * PLANE.climbRate * (plane.speed / PLANE.cruiseSpeed) - (stalled ? PLANE.sinkRate * 0.7 : 0);
   const prevAlt = plane.alt;
   plane.alt += climb * dt;
   plane.verticalSpeed = (plane.alt - prevAlt) / dt;
+  plane.flared = plane.pitch < -0.12 && plane.alt < terrain.groundHeight(plane.x, plane.z) + 90;
   plane.x += Math.sin(plane.heading) * plane.speed * dt * 1.15;
   plane.z += Math.cos(plane.heading) * plane.speed * dt;
   plane.x = Math.max(-WORLD.width, Math.min(WORLD.width, plane.x));
-  const drain = PLANE.fuelDrain * (0.35 + plane.throttle * 1.1 + (input.boost ? 0.9 : 0)) * dt;
+  const drain = PLANE.fuelDrain * (0.35 + plane.throttle * 1.1 + (input.boost ? 0.9 : 0) - (plane.throttle < 0.2 ? 0.25 : 0)) * dt;
   plane.fuel = Math.max(0, plane.fuel - drain);
   if (plane.fuel <= 0) {
     events.outOfFuel = true;
@@ -72,10 +88,14 @@ export function updateAircraft(plane, input, dt, terrain) {
   if (plane.alt <= ground + 2) {
     const hard = Math.abs(plane.verticalSpeed) > 26 || plane.speed > 200;
     const gentle = Math.abs(plane.verticalSpeed) <= 14 && plane.speed < 165 && Math.abs(plane.roll) < 0.3;
-    if (gentle && Math.abs(plane.x - terrain.runway.x) < terrain.runway.width && plane.z > terrain.runway.z - terrain.runway.length && plane.z < terrain.runway.z + 120) {
+    const onRunway = Math.abs(plane.x - terrain.runway.x) < terrain.runway.width && plane.z > terrain.runway.z - terrain.runway.length && plane.z < terrain.runway.z + 120;
+    plane.touchdownSink = plane.verticalSpeed;
+    plane.touchdownOffset = Math.abs(plane.x - terrain.runway.x);
+    if (gentle && onRunway) {
       plane.onGround = true;
       plane.landed = true;
       plane.alt = ground + 2;
+      events.touched = true;
     } else {
       events.crashed = true;
       plane.hull = 0;

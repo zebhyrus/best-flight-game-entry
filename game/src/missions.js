@@ -1,6 +1,8 @@
 // Missions for Skyhawk Valley: three sortie types, ring placement,
 // storm clouds, scoring and level flow. One file, one job: what the
 // pilot has to do, and whether it counts as done.
+// v2 deepens each one: storm cells push the plane, landings are
+// judged on flare, sink rate and centreline, and streaks pay more.
 import { MISSION_NAMES, RING, RUNWAY, SCORE, WORLD } from './config.js';
 
 export const MISSION_RING = 0;
@@ -23,6 +25,7 @@ export function createMissions(random) {
     elapsed: 0,
     bestStreak: 0,
     landings: 0,
+    landingGrade: '',
     type() { return this.index % 3; },
     name() { return MISSION_NAMES[this.type()]; },
   };
@@ -44,6 +47,8 @@ function placeRings(missions, random, startZ, stormy) {
         z: z + random.range(-160, 160),
         size: random.range(70, 130),
         hit: false,
+        pushX: random.range(-14, 14),
+        pushY: random.range(-6, 10),
       });
     }
     z += RING.spacing + random.range(-60, 90);
@@ -56,6 +61,7 @@ export function startMission(missions, random, planeZ) {
   missions.done = false;
   missions.failed = false;
   missions.elapsed = 0;
+  missions.landingGrade = '';
   const type = missions.type();
   if (type === MISSION_LAND) {
     missions.rings = [];
@@ -73,6 +79,23 @@ export function startMission(missions, random, planeZ) {
 
 export function nextRing(missions) {
   return missions.rings.find((ring) => !ring.passed) || null;
+}
+
+export function stormPush(missions, plane, dt) {
+  let pushed = false;
+  for (const storm of missions.storms) {
+    if (storm.hit) continue;
+    const dz = storm.z - plane.z;
+    const dx = storm.x - plane.x;
+    const dy = storm.y - plane.alt;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (dist < storm.size + 160) {
+      plane.x += storm.pushX * dt * (1 - dist / (storm.size + 160));
+      plane.alt += storm.pushY * dt * (1 - dist / (storm.size + 160));
+      pushed = true;
+    }
+  }
+  return pushed;
 }
 
 // Advance one step. Returns event flags the loop turns into sound,
@@ -133,12 +156,19 @@ export function updateMissions(missions, plane, dt, terrain) {
     const dz = runway.z - plane.z;
     if (plane.landed && plane.onGround) {
       missions.landings += 1;
-      const soft = Math.abs(plane.verticalSpeed) < 12;
-      missions.score += SCORE.landing + (soft ? SCORE.softLanding : 0);
+      const soft = Math.abs(plane.touchdownSink) <= 10;
+      const centred = plane.touchdownOffset < 12;
+      const flared = plane.flared;
+      let bonus = 0;
+      if (soft) bonus += SCORE.softLanding;
+      if (centred) bonus += SCORE.centrelineBonus;
+      if (flared) bonus += 100;
+      missions.landingGrade = soft && centred && flared ? 'PERFECT LANDING' : soft ? 'SMOOTH LANDING' : 'LANDED ON THE RUNWAY';
+      missions.score += SCORE.landing + bonus;
       missions.done = true;
       events.landed = true;
       events.complete = true;
-      missions.message = soft ? 'SMOOTH LANDING WELL FLOWN' : 'LANDED ON THE RUNWAY';
+      missions.message = `${missions.landingGrade} BONUS ${bonus}`;
       missions.messageTime = 4;
     } else if (dz < -400 && !plane.onGround) {
       missions.message = 'OVERSHOT THE RUNWAY TURN BACK';
